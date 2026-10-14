@@ -6,5 +6,15 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true
-  }
+  },
+  "vars": {
+    "ANI_CONFIG_KEY": "active.yaml"
+  },
+  "r2_buckets": [
+    {
+      "binding": "CONFIG_BUCKET",
+      "bucket_name": "ani-openai-mock-config",
+      "remote": true
+    }
+  ]
 }

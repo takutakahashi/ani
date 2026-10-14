@@ -1,8 +1,11 @@
 import { loadConfigFromUrl } from "@/src/config/remote";
+import { loadConfigFromR2, type ConfigR2Bucket } from "@/src/config/r2";
 import { getConfig, installConfig } from "@/src/config/runtime";
 import { handleChatCompletions, handleModels, handleResponses } from "@/src/server/handlers";
 
 interface Env {
+  CONFIG_BUCKET?: ConfigR2Bucket;
+  ANI_CONFIG_KEY?: string;
   ANI_CONFIG_URL?: string;
 }
 
@@ -10,10 +13,12 @@ let configPromise: Promise<void> | undefined;
 
 function ensureConfig(env: Env): Promise<void> {
   configPromise ??= (async () => {
-    if (env.ANI_CONFIG_URL === undefined) {
-      throw new Error("ANI_CONFIG_URL is required on Cloudflare Workers");
-    }
-    const config = await loadConfigFromUrl(env.ANI_CONFIG_URL);
+    const config = env.CONFIG_BUCKET !== undefined
+      ? await loadConfigFromR2(env.CONFIG_BUCKET, env.ANI_CONFIG_KEY ?? "active.yaml")
+      : env.ANI_CONFIG_URL !== undefined
+        ? await loadConfigFromUrl(env.ANI_CONFIG_URL)
+        : undefined;
+    if (config === undefined) throw new Error("CONFIG_BUCKET or ANI_CONFIG_URL is required on Cloudflare Workers");
     installConfig(config);
   })();
   return configPromise;

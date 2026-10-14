@@ -83,16 +83,18 @@ npm run cf:dev
 npm run cf:deploy
 ```
 
-Workersには実行時に読み取れるローカルファイルシステムがないため、`ANI_CONFIG_URL` bindingは必須です。
-public HTTPの設定を最初のリクエスト時に取得し、isolate内で検証・保持します。
+Workers版はR2 bindingの `CONFIG_BUCKET` から設定を読みます。既定のobject keyは `active.yaml` で、
+`ANI_CONFIG_KEY` bindingにより変更できます。最初のリクエスト時に取得し、isolate内で検証・保持します。
 
-```jsonc
-// wrangler.jsonc
-{
-  "vars": {
-    "ANI_CONFIG_URL": "https://config.example.com/ani.yaml"
-  }
-}
+R2 bindingがない環境では、互換fallbackとして `ANI_CONFIG_URL` も利用できます。
+
+設定のアップロード例:
+
+```sh
+npx wrangler r2 object put ani-openai-mock-config/active.yaml \
+  --file config/ani.yaml \
+  --content-type application/yaml \
+  --remote
 ```
 
 現在のデプロイ先: <https://ani-openai-mock.taku-takahashi120.workers.dev>

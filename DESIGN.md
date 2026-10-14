@@ -45,7 +45,7 @@ TypeScript、Next.js App Router、Node.js 22.12 以降を採用する。Next.js 
 - schema validation: `zod`
 - test: Vitest
 - コンテナ: Node.js Alpine の multi-stage build
-- Workers: Wrangler、public HTTP上の設定
+- Workers: Wrangler、private R2 binding（public HTTP fallbackも利用可能）
 
 論理構成:
 
@@ -67,8 +67,9 @@ YAML を正規のドキュメント形式とし、TOML は同じschemaへデコ�
 
 設定はサーバー起動時に `ANI_CONFIG_PATH`（既定 `config/ani.yaml`）から一度だけ読み込む。
 設定が不正な場合は終了コード2で停止し、リクエスト処理を開始しない。hot reloadは行わない。
-Cloudflare Workers版ではローカルファイルシステムを利用せず、`ANI_CONFIG_URL` を必須とする。
-設定ファイルの内容はWorker bundleやGitリポジトリへ含めない。
+Cloudflare Workers版ではローカルファイルシステムを利用せず、private R2 bindingから設定を読む。
+object keyは `ANI_CONFIG_KEY`（既定 `active.yaml`）で指定する。設定ファイルの内容はWorker bundleや
+Gitリポジトリへ含めない。R2 bindingがない環境では `ANI_CONFIG_URL` をfallbackとして利用できる。
 
 `ANI_CONFIG_URL` が指定された場合はpublic HTTPからGETする。Node.js版は起動時、Workers版は
 最初のリクエスト時に一度だけ取得する。timeoutは2秒、最大サイズは1MiBとし、取得・検証に失敗した
