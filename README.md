@@ -121,3 +121,12 @@ npm run lint
 npm run build
 npx wrangler deploy --dry-run
 ```
+
+デプロイ済みAPIのsmoke test:
+
+```sh
+./scripts/smoke-test.sh
+
+# 別のデプロイ先やAPIキーを使う場合
+ANI_BASE_URL=https://example.com ANI_API_KEY=test-key ./scripts/smoke-test.sh
+```
