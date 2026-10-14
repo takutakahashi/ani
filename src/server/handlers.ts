@@ -37,7 +37,6 @@ async function handleGeneration(request: Request, endpoint: "chat" | "responses"
 
   try {
     const body = await readJson(request, config.server.max_body_bytes);
-    if (body.stream === true) return apiError(400, "streaming is not supported", "invalid_request_error", "unsupported_value");
     if (typeof body.model !== "string" || body.model.length === 0) {
       return apiError(400, "model must be a non-empty string", "invalid_request_error", "invalid_value", "model");
     }
@@ -52,7 +51,7 @@ async function handleGeneration(request: Request, endpoint: "chat" | "responses"
     const rule = selectRule(config.rules, { model: body.model, headers: request.headers, parts });
     const plan = createPlan(config, rule, body.model, parts);
     await delay(plan.latencyMs, request.signal);
-    const response = render(plan, body.model, endpoint);
+    const response = render(plan, body.model, endpoint, body.stream === true);
     logRequest(request, endpoint, body.model, plan, performance.now() - started);
     return response;
   } catch (error) {
@@ -63,7 +62,7 @@ async function handleGeneration(request: Request, endpoint: "chat" | "responses"
   }
 }
 
-function render(plan: ResponsePlan, model: string, endpoint: "chat" | "responses"): Response {
+function render(plan: ResponsePlan, model: string, endpoint: "chat" | "responses", stream: boolean): Response {
   const headers = new Headers(plan.headers);
   if (plan.ruleId !== undefined) headers.set("x-ani-rule-id", plan.ruleId);
   if (plan.status < 200 || plan.status >= 300) {
@@ -78,75 +77,140 @@ function render(plan: ResponsePlan, model: string, endpoint: "chat" | "responses
 
   const created = Math.floor(Date.now() / 1_000);
   if (endpoint === "chat") {
-    return json(
-      {
-        id: `chatcmpl_${crypto.randomUUID().replaceAll("-", "")}`,
-        object: "chat.completion",
-        created,
-        model,
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: plan.text, refusal: null, annotations: [] },
-            logprobs: null,
-            finish_reason: "stop",
-          },
-        ],
-        usage: {
-          prompt_tokens: plan.inputTokens,
-          completion_tokens: plan.outputTokens,
-          total_tokens: plan.inputTokens + plan.outputTokens,
-        },
-      },
-      { status: plan.status, headers },
-    );
+    const id = `chatcmpl_${randomId()}`;
+    if (stream) return renderChatStream(plan, model, id, created, headers);
+    return json(createChatResponse(plan, model, id, created), { status: plan.status, headers });
   }
 
-  const responseId = `resp_${crypto.randomUUID().replaceAll("-", "")}`;
-  return json(
-    {
-      id: responseId,
-      object: "response",
-      created_at: created,
-      completed_at: created,
-      status: "completed",
-      error: null,
-      incomplete_details: null,
-      instructions: null,
-      max_output_tokens: null,
-      model,
-      output: [
-        {
-          id: `msg_${crypto.randomUUID().replaceAll("-", "")}`,
-          type: "message",
-          status: "completed",
-          role: "assistant",
-          content: [{ type: "output_text", text: plan.text, annotations: [], logprobs: [] }],
-        },
-      ],
-      output_text: plan.text,
-      parallel_tool_calls: true,
-      previous_response_id: null,
-      reasoning: { effort: null, summary: null },
-      store: false,
-      temperature: 1,
-      text: { format: { type: "text" } },
-      tool_choice: "auto",
-      tools: [],
-      top_p: 1,
-      truncation: "disabled",
-      usage: {
-        input_tokens: plan.inputTokens,
-        input_tokens_details: { cached_tokens: 0 },
-        output_tokens: plan.outputTokens,
-        output_tokens_details: { reasoning_tokens: 0 },
-        total_tokens: plan.inputTokens + plan.outputTokens,
+  const responseId = `resp_${randomId()}`;
+  const messageId = `msg_${randomId()}`;
+  const response = createResponsesResponse(plan, model, responseId, messageId, created);
+  if (stream) return renderResponsesStream(response, plan.text, messageId, headers);
+  return json(response, { status: plan.status, headers });
+}
+
+function randomId(): string {
+  return crypto.randomUUID().replaceAll("-", "");
+}
+
+function createChatResponse(plan: ResponsePlan, model: string, id: string, created: number): Record<string, unknown> {
+  return {
+    id,
+    object: "chat.completion",
+    created,
+    model,
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: plan.text, refusal: null, annotations: [] },
+        logprobs: null,
+        finish_reason: "stop",
       },
-      user: null,
-      metadata: {},
+    ],
+    usage: {
+      prompt_tokens: plan.inputTokens,
+      completion_tokens: plan.outputTokens,
+      total_tokens: plan.inputTokens + plan.outputTokens,
     },
-    { status: plan.status, headers },
+  };
+}
+
+function createResponsesResponse(
+  plan: ResponsePlan,
+  model: string,
+  responseId: string,
+  messageId: string,
+  created: number,
+): Record<string, unknown> {
+  return {
+    id: responseId,
+    object: "response",
+    created_at: created,
+    completed_at: created,
+    status: "completed",
+    error: null,
+    incomplete_details: null,
+    instructions: null,
+    max_output_tokens: null,
+    model,
+    output: [createOutputMessage(messageId, plan.text, "completed")],
+    output_text: plan.text,
+    parallel_tool_calls: true,
+    previous_response_id: null,
+    reasoning: { effort: null, summary: null },
+    store: false,
+    temperature: 1,
+    text: { format: { type: "text" } },
+    tool_choice: "auto",
+    tools: [],
+    top_p: 1,
+    truncation: "disabled",
+    usage: {
+      input_tokens: plan.inputTokens,
+      input_tokens_details: { cached_tokens: 0 },
+      output_tokens: plan.outputTokens,
+      output_tokens_details: { reasoning_tokens: 0 },
+      total_tokens: plan.inputTokens + plan.outputTokens,
+    },
+    user: null,
+    metadata: {},
+  };
+}
+
+function createOutputMessage(id: string, text: string, status: "in_progress" | "completed"): Record<string, unknown> {
+  return {
+    id,
+    type: "message",
+    status,
+    role: "assistant",
+    content: status === "completed" ? [{ type: "output_text", text, annotations: [], logprobs: [] }] : [],
+  };
+}
+
+function renderChatStream(plan: ResponsePlan, model: string, id: string, created: number, headers: Headers): Response {
+  const base = { id, object: "chat.completion.chunk", created, model };
+  const chunks = [
+    { ...base, choices: [{ index: 0, delta: { role: "assistant", content: "" }, logprobs: null, finish_reason: null }] },
+    { ...base, choices: [{ index: 0, delta: { content: plan.text }, logprobs: null, finish_reason: null }] },
+    { ...base, choices: [{ index: 0, delta: {}, logprobs: null, finish_reason: "stop" }] },
+  ];
+  return sse([...chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`), "data: [DONE]\n\n"], headers);
+}
+
+function renderResponsesStream(
+  response: Record<string, unknown>,
+  text: string,
+  messageId: string,
+  headers: Headers,
+): Response {
+  const initialResponse = { ...response, completed_at: null, status: "in_progress", output: [], output_text: "", usage: null };
+  const pendingMessage = createOutputMessage(messageId, "", "in_progress");
+  const completedMessage = createOutputMessage(messageId, text, "completed");
+  const emptyPart = { type: "output_text", text: "", annotations: [], logprobs: [] };
+  const completedPart = { ...emptyPart, text };
+  const events = [
+    { type: "response.created", response: initialResponse },
+    { type: "response.output_item.added", output_index: 0, item: pendingMessage },
+    { type: "response.content_part.added", item_id: messageId, output_index: 0, content_index: 0, part: emptyPart },
+    { type: "response.output_text.delta", item_id: messageId, output_index: 0, content_index: 0, delta: text, logprobs: [] },
+    { type: "response.output_text.done", item_id: messageId, output_index: 0, content_index: 0, text, logprobs: [] },
+    { type: "response.content_part.done", item_id: messageId, output_index: 0, content_index: 0, part: completedPart },
+    { type: "response.output_item.done", output_index: 0, item: completedMessage },
+    { type: "response.completed", response },
+  ];
+  return sse(
+    events.map((event, sequenceNumber) => {
+      const data = { ...event, sequence_number: sequenceNumber };
+      return `event: ${event.type}\ndata: ${JSON.stringify(data)}\n\n`;
+    }),
+    headers,
   );
+}
+
+function sse(events: string[], headers: Headers): Response {
+  headers.set("content-type", "text/event-stream; charset=utf-8");
+  headers.set("cache-control", "no-cache");
+  return new Response(events.join(""), { status: 200, headers });
 }
 
 class BodyError extends Error {

@@ -80,9 +80,69 @@ describe("OpenAI-compatible handlers", () => {
     expect(first.output_text).toBe(second.output_text);
   });
 
-  it("validates authentication and streaming", async () => {
+  it("validates authentication", () => {
     expect(handleModels(request("/v1/models", undefined, "wrong")).status).toBe(401);
-    const response = await handleResponses(request("/v1/responses", { model: "ani-test", input: "x", stream: true }));
-    expect(response.status).toBe(400);
+  });
+
+  it("streams the complete Responses API event sequence", async () => {
+    const response = await handleResponses(
+      request("/v1/responses", { model: "ani-test", input: "hello", stream: true }),
+    );
+    const body = await response.text();
+    const events = body
+      .trim()
+      .split("\n\n")
+      .map((block) => {
+        const lines = block.split("\n");
+        return { event: lines[0].slice("event: ".length), data: JSON.parse(lines[1].slice("data: ".length)) };
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(events.map(({ event }) => event)).toEqual([
+      "response.created",
+      "response.output_item.added",
+      "response.content_part.added",
+      "response.output_text.delta",
+      "response.output_text.done",
+      "response.content_part.done",
+      "response.output_item.done",
+      "response.completed",
+    ]);
+    expect(events.map(({ data }) => data.sequence_number)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(events[3].data.delta).toBe("default");
+    expect(events[7].data.response.status).toBe("completed");
+    expect(events[7].data.response.output_text).toBe("default");
+    expect(events[7].data.response.usage.output_tokens).toBe(3);
+  });
+
+  it("streams Chat Completions chunks followed by DONE", async () => {
+    const response = await handleChatCompletions(
+      request("/v1/chat/completions", {
+        model: "ani-test",
+        messages: [{ role: "user", content: "hello" }],
+        stream: true,
+      }),
+    );
+    const body = await response.text();
+    const frames = body.trim().split("\n\n");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(frames).toHaveLength(4);
+    expect(JSON.parse(frames[0].slice("data: ".length)).choices[0].delta.role).toBe("assistant");
+    expect(JSON.parse(frames[1].slice("data: ".length)).choices[0].delta.content).toBe("default");
+    expect(JSON.parse(frames[2].slice("data: ".length)).choices[0].finish_reason).toBe("stop");
+    expect(frames[3]).toBe("data: [DONE]");
+  });
+
+  it("returns configured HTTP errors without starting a stream", async () => {
+    const response = await handleResponses(
+      request("/v1/responses", { model: "ani-test", input: "limit", stream: true }),
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect((await response.json()).error.code).toBe("rate_limit_exceeded");
   });
 });

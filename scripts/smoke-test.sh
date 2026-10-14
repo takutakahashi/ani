@@ -91,6 +91,17 @@ assert_header_contains answer 'x-ani-rule-id: answer-to-everything'
 print_response answer
 printf 'PASS: Responses API fixed response\n'
 
+stream_status=$(request POST /v1/responses \
+  '{"model":"ani-1","input":"万物の答えを教えて","stream":true}' responses_stream)
+assert_status "$stream_status" 200 responses_stream
+assert_header_contains responses_stream 'content-type: text/event-stream'
+assert_body_contains responses_stream 'event: response.created'
+assert_body_contains responses_stream 'event: response.output_text.delta'
+assert_body_contains responses_stream '"delta":"42"'
+assert_body_contains responses_stream 'event: response.completed'
+print_response responses_stream
+printf 'PASS: Responses API stream\n'
+
 ojisan_status=$(request POST /v1/chat/completions \
   '{"model":"ani-1","messages":[{"role":"user","content":"ロリポおじさん、ひとことお願いします"}]}' ojisan)
 assert_status "$ojisan_status" 200 ojisan
@@ -99,6 +110,15 @@ assert_body_contains ojisan '"content":"'
 assert_header_contains ojisan 'x-ani-rule-id: lolipo-ojisan'
 print_response ojisan
 printf 'PASS: Chat Completions random response\n'
+
+chat_stream_status=$(request POST /v1/chat/completions \
+  '{"model":"ani-1","messages":[{"role":"user","content":"ロリポおじさん、ひとことお願いします"}],"stream":true}' chat_stream)
+assert_status "$chat_stream_status" 200 chat_stream
+assert_header_contains chat_stream 'content-type: text/event-stream'
+assert_body_contains chat_stream '"object":"chat.completion.chunk"'
+assert_body_contains chat_stream 'data: [DONE]'
+print_response chat_stream
+printf 'PASS: Chat Completions stream\n'
 
 rate_status=$(request POST /v1/responses \
   '{"model":"ani-1","input":"[[rate-limit]]"}' rate_limit)
