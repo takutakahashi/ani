@@ -68,11 +68,19 @@ assert_header_contains() {
   }
 }
 
+print_response() {
+  name=$1
+  printf '%s response:\n' "$name"
+  cat "$tmp_dir/$name.body"
+  printf '\n'
+}
+
 printf 'Testing %s\n' "$BASE_URL"
 
 health_status=$(request GET /healthz '' health)
 assert_status "$health_status" 200 health
 assert_body_contains health '"status":"ok"'
+print_response health
 printf 'PASS: health check\n'
 
 answer_status=$(request POST /v1/responses \
@@ -80,6 +88,7 @@ answer_status=$(request POST /v1/responses \
 assert_status "$answer_status" 200 answer
 assert_body_contains answer '"output_text":"42"'
 assert_header_contains answer 'x-ani-rule-id: answer-to-everything'
+print_response answer
 printf 'PASS: Responses API fixed response\n'
 
 ojisan_status=$(request POST /v1/chat/completions \
@@ -88,6 +97,7 @@ assert_status "$ojisan_status" 200 ojisan
 assert_body_contains ojisan '"object":"chat.completion"'
 assert_body_contains ojisan '"content":"'
 assert_header_contains ojisan 'x-ani-rule-id: lolipo-ojisan'
+print_response ojisan
 printf 'PASS: Chat Completions random response\n'
 
 rate_status=$(request POST /v1/responses \
@@ -96,6 +106,7 @@ assert_status "$rate_status" 429 rate_limit
 assert_body_contains rate_limit '"code":"rate_limit_exceeded"'
 assert_header_contains rate_limit 'retry-after: 1'
 assert_header_contains rate_limit 'x-ani-rule-id: rate-limit-error'
+print_response rate_limit
 printf 'PASS: configured rate-limit response\n'
 
 printf 'All smoke tests passed.\n'
