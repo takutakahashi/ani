@@ -121,3 +121,17 @@ npm run lint
 npm run build
 npx wrangler deploy --dry-run
 ```
+
+デプロイ済みAPIのsmoke test:
+
+```sh
+./scripts/smoke-test.sh
+
+# 別のデプロイ先やAPIキーを使う場合
+ANI_BASE_URL=https://example.com ANI_API_KEY=test-key ./scripts/smoke-test.sh
+```
+
+`/v1/responses` と `/v1/chat/completions` は `"stream": true` に対応しています。Responses APIは
+`response.created` から `response.completed` までをSSEで返し、Chat Completionsは最後に
+`data: [DONE]` を返します。設定で4xx/5xxを指定したルールは、ストリームを開始せず従来どおり
+HTTPエラーのJSONレスポンスを返します。
