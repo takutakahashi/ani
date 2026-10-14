@@ -1,0 +1,8 @@
+.next/
+node_modules/
+coverage/
+.env*
+!.env.example
+*.tsbuildinfo
+.wrangler/
+config/ani.yaml
