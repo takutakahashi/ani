@@ -251,17 +251,14 @@ retry-after
 
 認証を有効にした場合、`Authorization: Bearer <key>` を検証する。比較は constant-time とし、ログへ値を出さない。
 
-## 8. ストリーミング拡張
-
-MVP 後に `stream: true` を実装する。
+## 8. ストリーミング
 
 - Chat Completions: `text/event-stream` で chat completion chunk を送り、最後に `data: [DONE]`
-- Responses: `response.created`、text delta、`response.completed` の順に SSE event を送る
-- `latency.first_token` と `latency.per_token` を追加
-- `output_tokens` 個のチャンクではなく、`chunk_size_tokens` 単位で送信可能
+- Responses: `response.created` から `response.completed` までのCodex互換SSE eventを送る
+- 設定された4xx/5xxはストリームを開始せず、HTTPエラーとJSON本文で返す
 
-接続前遅延と token 間遅延を別設定にしないと TTFT と総生成時間を個別に試験できないため、単一の latency
-設定をストリームへ流用しない。
+現在のストリームは応答テキストを1つのdeltaとして送る。TTFTとtoken間遅延を個別に試験するための
+`latency.first_token`、`latency.per_token`、`chunk_size_tokens` は将来拡張とする。
 
 ## 9. 実行
 
