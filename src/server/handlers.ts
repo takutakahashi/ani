@@ -1,6 +1,7 @@
 import { getConfig } from "@/src/config/runtime";
 import { selectRule } from "@/src/matcher/match";
 import { normalizeChatMessages, normalizeResponseInput, type PromptPart } from "@/src/prompt/normalize";
+import { findReturnDirective, type ReturnDirective } from "@/src/prompt/return-directive";
 import { createPlan, type ResponsePlan } from "@/src/scenario/plan";
 
 interface RequestBody {
@@ -50,6 +51,8 @@ async function handleGeneration(request: Request, endpoint: "chat" | "responses"
 
     const rule = selectRule(config.rules, { model: body.model, headers: request.headers, parts });
     const plan = createPlan(config, rule, body.model, parts);
+    const directive = findReturnDirective(parts);
+    if (directive !== undefined) applyReturnDirective(plan, directive, request, body);
     await delay(plan.latencyMs, request.signal);
     const response = render(plan, body.model, endpoint, body.stream === true);
     logRequest(request, endpoint, body.model, plan, performance.now() - started);
@@ -62,12 +65,41 @@ async function handleGeneration(request: Request, endpoint: "chat" | "responses"
   }
 }
 
+function applyReturnDirective(
+  plan: ResponsePlan,
+  directive: ReturnDirective,
+  request: Request,
+  body: RequestBody,
+): void {
+  if (directive.status !== undefined) plan.status = directive.status;
+  if (directive.latencyMs !== undefined) plan.latencyMs = directive.latencyMs;
+  if (directive.retryAfter !== undefined) plan.headers["retry-after"] = directive.retryAfter;
+  if (directive.responseText !== undefined) plan.text = directive.responseText;
+  if (directive.debugResponse === true) plan.text = createDebugResponse(request, body);
+  plan.outputTokens = Math.ceil([...plan.text].length / 4);
+  if (plan.error !== undefined) plan.error = { ...plan.error, message: plan.text };
+}
+
+function createDebugResponse(request: Request, body: RequestBody): string {
+  const headers = Object.fromEntries(
+    [...request.headers].filter(([name]) => !isSensitiveHeader(name)),
+  );
+  return JSON.stringify({ method: request.method, url: request.url, headers, body });
+}
+
+function isSensitiveHeader(name: string): boolean {
+  return /(?:authorization|cookie|credential|secret|token|api[-_]?key)/i.test(name);
+}
+
 function render(plan: ResponsePlan, model: string, endpoint: "chat" | "responses", stream: boolean): Response {
   const headers = new Headers(plan.headers);
   if (plan.ruleId !== undefined) headers.set("x-ani-rule-id", plan.ruleId);
+  if (plan.status === 204 || plan.status === 205 || plan.status === 304) {
+    return new Response(null, { status: plan.status, headers });
+  }
   if (plan.status < 200 || plan.status >= 300) {
     const error = plan.error ?? {
-      message: `mock HTTP ${plan.status}`,
+      message: plan.text || `mock HTTP ${plan.status}`,
       type: "api_error",
       param: null,
       code: null,
