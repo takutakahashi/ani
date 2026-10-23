@@ -31,10 +31,10 @@ rules:
   ".yaml",
 );
 
-function request(path: string, body?: unknown, apiKey = "secret"): Request {
+function request(path: string, body?: unknown, apiKey = "secret", headers?: Record<string, string>): Request {
   return new Request(`http://localhost${path}`, {
     method: body === undefined ? "GET" : "POST",
-    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json", ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
@@ -144,5 +144,68 @@ describe("OpenAI-compatible handlers", () => {
     expect(response.status).toBe(429);
     expect(response.headers.get("content-type")).toContain("application/json");
     expect((await response.json()).error.code).toBe("rate_limit_exceeded");
+  });
+
+  it("overrides status, latency, retry-after, and response text from a return directive", async () => {
+    const started = performance.now();
+    const response = await handleChatCompletions(
+      request("/v1/chat/completions", {
+        model: "ani-test",
+        messages: [{ role: "user", content: 'return(response_text="OK", retry=3, code=429, latency=20m)' }],
+      }),
+    );
+
+    expect(performance.now() - started).toBeGreaterThanOrEqual(15);
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("3");
+    expect((await response.json()).error.message).toBe("OK");
+  });
+
+  it("returns an echo-style debug response without sensitive headers", async () => {
+    const requestBody = {
+      model: "ani-test",
+      input: 'return(response_text="ignored", return_debug_responce=true)',
+    };
+    const response = await handleResponses(
+      request("/v1/responses", requestBody, "secret", {
+        "x-visible": "shown",
+        "x-api-key": "hidden",
+        cookie: "session=hidden",
+      }),
+    );
+    const responseBody = await response.json();
+    const debug = JSON.parse(responseBody.output_text);
+
+    expect(response.status).toBe(200);
+    expect(debug.method).toBe("POST");
+    expect(debug.url).toBe("http://localhost/v1/responses");
+    expect(debug.headers["x-visible"]).toBe("shown");
+    expect(debug.headers.authorization).toBeUndefined();
+    expect(debug.headers["x-api-key"]).toBeUndefined();
+    expect(debug.headers.cookie).toBeUndefined();
+    expect(debug.body).toEqual(requestBody);
+  });
+
+  it("supports status codes that prohibit response bodies", async () => {
+    const response = await handleResponses(
+      request("/v1/responses", { model: "ani-test", input: "return(code=204)" }),
+    );
+
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe("");
+  });
+
+  it("uses configured defaults for omitted return directive values", async () => {
+    const response = await handleChatCompletions(
+      request("/v1/chat/completions", {
+        model: "ani-test",
+        messages: [{ role: "user", content: "return(retry=7)" }],
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("retry-after")).toBe("7");
+    expect(body.choices[0].message.content).toBe("default");
   });
 });

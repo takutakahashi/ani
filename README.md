@@ -135,3 +135,15 @@ ANI_BASE_URL=https://example.com ANI_API_KEY=test-key ./scripts/smoke-test.sh
 `response.created` から `response.completed` までをSSEで返し、Chat Completionsは最後に
 `data: [DONE]` を返します。設定で4xx/5xxを指定したルールは、ストリームを開始せず従来どおり
 HTTPエラーのJSONレスポンスを返します。
+
+プロンプトに次のディレクティブを含めると、設定ファイルより優先してレスポンスを制御できます。
+
+```text
+return(code=429, latency=100m, retry=3, response_text="OK", return_debug_response=false)
+```
+
+引数の順序は自由で、省略した値には設定ファイルのルールまたはdefaultsが使われます。`status` は `code`、
+`retry_after` は `retry` の別名としても利用できます。`latency` は `m` / `ms`（ミリ秒）または `s`（秒）です。
+`return_debug_response` が `true` の場合、`response_text` の代わりに method、URL、秘匿ヘッダーを除いた
+request headers、request bodyをJSON文字列として応答本文に返します。互換性のため、綴りが異なる
+`return_debug_responce` も受け付けます。
