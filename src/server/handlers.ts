@@ -1,6 +1,11 @@
 import { getConfig } from "@/src/config/runtime";
 import { selectRule } from "@/src/matcher/match";
-import { normalizeChatMessages, normalizeResponseInput, type PromptPart } from "@/src/prompt/normalize";
+import {
+  normalizeAnthropicMessages,
+  normalizeChatMessages,
+  normalizeResponseInput,
+  type PromptPart,
+} from "@/src/prompt/normalize";
 import { findReturnDirective, type ReturnDirective } from "@/src/prompt/return-directive";
 import { createPlan, type ResponsePlan } from "@/src/scenario/plan";
 
@@ -8,8 +13,12 @@ interface RequestBody {
   model?: unknown;
   messages?: unknown;
   input?: unknown;
+  max_tokens?: unknown;
+  system?: unknown;
   stream?: unknown;
 }
+
+type Endpoint = "chat" | "responses" | "anthropic";
 
 export async function handleChatCompletions(request: Request): Promise<Response> {
   return handleGeneration(request, "chat");
@@ -17,6 +26,10 @@ export async function handleChatCompletions(request: Request): Promise<Response>
 
 export async function handleResponses(request: Request): Promise<Response> {
   return handleGeneration(request, "responses");
+}
+
+export async function handleAnthropicMessages(request: Request): Promise<Response> {
+  return handleGeneration(request, "anthropic");
 }
 
 export function handleModels(request: Request): Response {
@@ -30,23 +43,36 @@ export function handleModels(request: Request): Response {
   });
 }
 
-async function handleGeneration(request: Request, endpoint: "chat" | "responses"): Promise<Response> {
+async function handleGeneration(request: Request, endpoint: Endpoint): Promise<Response> {
   const started = performance.now();
   const config = getConfig();
-  const unauthorized = authenticate(request, config.server.api_key);
+  const unauthorized = authenticate(request, config.server.api_key, endpoint);
   if (unauthorized !== undefined) return unauthorized;
 
   try {
     const body = await readJson(request, config.server.max_body_bytes);
     if (typeof body.model !== "string" || body.model.length === 0) {
-      return apiError(400, "model must be a non-empty string", "invalid_request_error", "invalid_value", "model");
+      return endpointError(endpoint, 400, "model must be a non-empty string", "invalid_request_error", "invalid_value");
+    }
+    if (endpoint === "anthropic" && (!Number.isInteger(body.max_tokens) || (body.max_tokens as number) <= 0)) {
+      return endpointError(endpoint, 400, "max_tokens must be a positive integer", "invalid_request_error", "invalid_value");
     }
 
     let parts: PromptPart[];
     try {
-      parts = endpoint === "chat" ? normalizeChatMessages(body.messages) : normalizeResponseInput(body.input);
+      parts = endpoint === "chat"
+        ? normalizeChatMessages(body.messages)
+        : endpoint === "anthropic"
+          ? normalizeAnthropicMessages(body.system, body.messages)
+          : normalizeResponseInput(body.input);
     } catch (error) {
-      return apiError(400, error instanceof Error ? error.message : String(error), "invalid_request_error", "invalid_value");
+      return endpointError(
+        endpoint,
+        400,
+        error instanceof Error ? error.message : String(error),
+        "invalid_request_error",
+        "invalid_value",
+      );
     }
 
     const rule = selectRule(config.rules, { model: body.model, headers: request.headers, parts });
@@ -58,10 +84,12 @@ async function handleGeneration(request: Request, endpoint: "chat" | "responses"
     logRequest(request, endpoint, body.model, plan, performance.now() - started);
     return response;
   } catch (error) {
-    if (error instanceof BodyError) return apiError(error.status, error.message, "invalid_request_error", error.code);
+    if (error instanceof BodyError) {
+      return endpointError(endpoint, error.status, error.message, "invalid_request_error", error.code);
+    }
     if (request.signal.aborted) return new Response(null, { status: 499 });
     console.error(JSON.stringify({ event: "request.error", message: error instanceof Error ? error.message : String(error) }));
-    return apiError(500, "internal server error", "api_error", "internal_error");
+    return endpointError(endpoint, 500, "internal server error", "api_error", "internal_error");
   }
 }
 
@@ -91,9 +119,10 @@ function isSensitiveHeader(name: string): boolean {
   return /(?:authorization|cookie|credential|secret|token|api[-_]?key)/i.test(name);
 }
 
-function render(plan: ResponsePlan, model: string, endpoint: "chat" | "responses", stream: boolean): Response {
+function render(plan: ResponsePlan, model: string, endpoint: Endpoint, stream: boolean): Response {
   const headers = new Headers(plan.headers);
   if (plan.ruleId !== undefined) headers.set("x-ani-rule-id", plan.ruleId);
+  if (endpoint === "anthropic") headers.set("request-id", `req_${randomId()}`);
   if (plan.status === 204 || plan.status === 205 || plan.status === 304) {
     return new Response(null, { status: plan.status, headers });
   }
@@ -104,10 +133,18 @@ function render(plan: ResponsePlan, model: string, endpoint: "chat" | "responses
       param: null,
       code: null,
     };
+    if (endpoint === "anthropic") {
+      return anthropicError(plan.status, error.message, anthropicErrorType(plan.status, error.type), headers);
+    }
     return json({ error }, { status: plan.status, headers });
   }
 
   const created = Math.floor(Date.now() / 1_000);
+  if (endpoint === "anthropic") {
+    const message = createAnthropicResponse(plan, model, `msg_${randomId()}`);
+    if (stream) return renderAnthropicStream(message, plan.text, plan.outputTokens, headers);
+    return json(message, { status: plan.status, headers });
+  }
   if (endpoint === "chat") {
     const id = `chatcmpl_${randomId()}`;
     if (stream) return renderChatStream(plan, model, id, created, headers);
@@ -119,6 +156,48 @@ function render(plan: ResponsePlan, model: string, endpoint: "chat" | "responses
   const response = createResponsesResponse(plan, model, responseId, messageId, created);
   if (stream) return renderResponsesStream(response, plan.text, messageId, headers);
   return json(response, { status: plan.status, headers });
+}
+
+function createAnthropicResponse(plan: ResponsePlan, model: string, id: string): Record<string, unknown> {
+  return {
+    id,
+    type: "message",
+    role: "assistant",
+    content: [{ type: "text", text: plan.text }],
+    model,
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: {
+      input_tokens: plan.inputTokens,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      output_tokens: plan.outputTokens,
+    },
+  };
+}
+
+function renderAnthropicStream(
+  message: Record<string, unknown>,
+  responseText: string,
+  outputTokens: number,
+  headers: Headers,
+): Response {
+  const initialMessage = {
+    ...message,
+    content: [],
+    stop_reason: null,
+    stop_sequence: null,
+    usage: { input_tokens: (message.usage as { input_tokens: number }).input_tokens, output_tokens: 0 },
+  };
+  const events = [
+    { type: "message_start", message: initialMessage },
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: responseText } },
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: outputTokens } },
+    { type: "message_stop" },
+  ];
+  return sse(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`), headers);
 }
 
 function randomId(): string {
@@ -273,13 +352,48 @@ async function readJson(request: Request, maxBytes: number): Promise<RequestBody
   }
 }
 
-function authenticate(request: Request, expected: string | undefined): Response | undefined {
+function authenticate(request: Request, expected: string | undefined, endpoint: Endpoint = "chat"): Response | undefined {
   if (expected === undefined) return undefined;
-  const actual = request.headers.get("authorization") ?? "";
-  if (!safeEqual(actual, `Bearer ${expected}`)) {
+  const authorized = endpoint === "anthropic"
+    ? safeEqual(request.headers.get("x-api-key") ?? "", expected)
+      || safeEqual(request.headers.get("authorization") ?? "", `Bearer ${expected}`)
+    : safeEqual(request.headers.get("authorization") ?? "", `Bearer ${expected}`);
+  if (!authorized) {
+    if (endpoint === "anthropic") return anthropicError(401, "invalid x-api-key", "authentication_error");
     return apiError(401, "Incorrect API key provided", "invalid_request_error", "invalid_api_key");
   }
   return undefined;
+}
+
+function endpointError(
+  endpoint: Endpoint,
+  status: number,
+  message: string,
+  type: string,
+  code: string | null,
+): Response {
+  return endpoint === "anthropic"
+    ? anthropicError(status, message, anthropicErrorType(status, type))
+    : apiError(status, message, type, code);
+}
+
+function anthropicErrorType(status: number, configuredType?: string): string {
+  if (configuredType?.endsWith("_error")) return configuredType;
+  if (status === 401) return "authentication_error";
+  if (status === 403) return "permission_error";
+  if (status === 404) return "not_found_error";
+  if (status === 413) return "request_too_large";
+  if (status === 429) return "rate_limit_error";
+  if (status === 529) return "overloaded_error";
+  if (status >= 500) return "api_error";
+  return "invalid_request_error";
+}
+
+function anthropicError(status: number, message: string, type: string, initialHeaders?: Headers): Response {
+  const requestId = `req_${randomId()}`;
+  const headers = new Headers(initialHeaders);
+  headers.set("request-id", requestId);
+  return json({ type: "error", error: { type, message }, request_id: requestId }, { status, headers });
 }
 
 function safeEqual(left: string, right: string): boolean {

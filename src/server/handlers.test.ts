@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseConfig } from "@/src/config/load";
 import { setConfigForTest } from "@/src/config/runtime";
-import { handleChatCompletions, handleModels, handleResponses } from "./handlers";
+import { handleAnthropicMessages, handleChatCompletions, handleModels, handleResponses } from "./handlers";
 
 const config = parseConfig(
   `version: 1
@@ -207,5 +207,94 @@ describe("OpenAI-compatible handlers", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("retry-after")).toBe("7");
     expect(body.choices[0].message.content).toBe("default");
+  });
+});
+
+describe("Anthropic-compatible handler", () => {
+  beforeEach(() => setConfigForTest(config));
+  afterEach(() => setConfigForTest(undefined));
+
+  function anthropicRequest(body: unknown, apiKey = "secret"): Request {
+    return new Request("http://localhost/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("renders a Messages API response and matches system content", async () => {
+    const response = await handleAnthropicMessages(
+      anthropicRequest({
+        model: "claude-test",
+        max_tokens: 100,
+        system: "random",
+        messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.type).toBe("message");
+    expect(body.role).toBe("assistant");
+    expect(["alpha", "beta"]).toContain(body.content[0].text);
+    expect(body.stop_reason).toBe("end_turn");
+    expect(body.usage.output_tokens).toBeGreaterThan(0);
+    expect(response.headers.get("x-ani-rule-id")).toBe("random");
+    expect(response.headers.get("request-id")).toMatch(/^req_/);
+  });
+
+  it("streams the Anthropic Messages event sequence", async () => {
+    const response = await handleAnthropicMessages(
+      anthropicRequest({
+        model: "claude-test",
+        max_tokens: 100,
+        messages: [{ role: "user", content: "hello" }],
+        stream: true,
+      }),
+    );
+    const events = (await response.text()).trim().split("\n\n").map((block) => block.split("\n")[0]);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(events).toEqual([
+      "event: message_start",
+      "event: content_block_start",
+      "event: content_block_delta",
+      "event: content_block_stop",
+      "event: message_delta",
+      "event: message_stop",
+    ]);
+  });
+
+  it("uses Anthropic authentication and error shapes", async () => {
+    const unauthorized = await handleAnthropicMessages(
+      anthropicRequest({ model: "claude-test", max_tokens: 10, messages: [] }, "wrong"),
+    );
+    const unauthorizedBody = await unauthorized.json();
+    expect(unauthorized.status).toBe(401);
+    expect(unauthorizedBody.type).toBe("error");
+    expect(unauthorizedBody.error.type).toBe("authentication_error");
+    expect(unauthorizedBody.request_id).toMatch(/^req_/);
+    expect(unauthorized.headers.get("request-id")).toBe(unauthorizedBody.request_id);
+
+    const rateLimited = await handleAnthropicMessages(
+      anthropicRequest({ model: "claude-test", max_tokens: 10, messages: [{ role: "user", content: "limit" }] }),
+    );
+    const rateLimitedBody = await rateLimited.json();
+    expect(rateLimited.status).toBe(429);
+    expect(rateLimitedBody.error).toEqual({ type: "rate_limit_error", message: "retry" });
+    expect(rateLimited.headers.get("retry-after")).toBe("2");
+  });
+
+  it("validates required Anthropic fields with Anthropic errors", async () => {
+    const response = await handleAnthropicMessages(
+      anthropicRequest({ model: "claude-test", messages: [{ role: "user", content: "hello" }] }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.type).toBe("error");
+    expect(body.error.type).toBe("invalid_request_error");
+    expect(body.error.message).toContain("max_tokens");
   });
 });

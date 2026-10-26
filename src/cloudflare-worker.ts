@@ -1,7 +1,7 @@
 import { loadConfigFromUrl } from "@/src/config/remote";
 import { loadConfigFromR2, type ConfigR2Bucket } from "@/src/config/r2";
 import { getConfig, installConfig } from "@/src/config/runtime";
-import { handleChatCompletions, handleModels, handleResponses } from "@/src/server/handlers";
+import { handleAnthropicMessages, handleChatCompletions, handleModels, handleResponses } from "@/src/server/handlers";
 
 interface Env {
   CONFIG_BUCKET?: ConfigR2Bucket;
@@ -56,6 +56,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/v1/models") return handleModels(request);
     if (request.method === "POST" && url.pathname === "/v1/chat/completions") return handleChatCompletions(request);
     if (request.method === "POST" && url.pathname === "/v1/responses") return handleResponses(request);
+    if (request.method === "POST" && url.pathname === "/v1/messages") return handleAnthropicMessages(request);
     return Response.json(
       { error: { message: "Not found", type: "invalid_request_error", param: null, code: "not_found" } },
       { status: 404 },
