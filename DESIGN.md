@@ -2,7 +2,7 @@
 
 ## 1. 目的
 
-`ani` は、設定ファイルだけで振る舞いを変更できる OpenAI API 互換のモックサーバーである。
+`ani` は、設定ファイルだけで振る舞いを変更できる OpenAI / Anthropic API 互換のモックサーバーである。
 プロンプトに含まれる文字列をルールに照合し、成功応答、任意の HTTP エラー、遅延、
 トークン使用量、レート制限応答、ランダム応答を再現する。
 
@@ -15,6 +15,7 @@
 
 - `POST /v1/chat/completions`
 - `POST /v1/responses`
+- `POST /v1/messages`（Anthropic Messages API）
 - `GET /v1/models`
 - 非ストリーミング応答
 - YAML / TOML 設定（起動時にどちらか 1 ファイルを読み込む）
@@ -55,10 +56,10 @@ HTTP adapter
   -> rule matcher
   -> response planner
   -> latency scheduler
-  -> OpenAI response renderer (chat | responses)
+  -> API response renderer (chat | responses | anthropic messages)
 ```
 
-HTTP 形式とシナリオ判定を分離し、同じルールを Chat Completions と Responses の双方で再利用する。
+HTTP 形式とシナリオ判定を分離し、同じルールを Chat Completions、Responses、Messages で再利用する。
 
 ## 4. 設定モデル
 
@@ -145,6 +146,7 @@ TOML では同じキーを `[server]`, `[defaults]`, `[[rules]]`, `[[rules.respo
 
 Chat Completions は `messages` 内の文字列 content と `content[type=text].text` を対象にする。
 Responses API は `input` が文字列の場合と、input message の `input_text` を対象にする。
+Anthropic Messages API は `system` と `messages` 内の文字列contentおよび `content[type=text].text` を対象にする。
 画像、音声、ファイルは照合対象から除外する。
 
 各テキスト片を次の内部形式へ正規化する。
@@ -250,11 +252,13 @@ retry-after
 `strict_models` は任意機能とし、既定は任意モデル名を受け入れる。
 
 認証を有効にした場合、`Authorization: Bearer <key>` を検証する。比較は constant-time とし、ログへ値を出さない。
+Anthropic Messages APIでは `x-api-key`（またはBearer認証）を検証し、成功応答・エラー・SSEをAnthropic形式で返す。
 
 ## 8. ストリーミング
 
 - Chat Completions: `text/event-stream` で chat completion chunk を送り、最後に `data: [DONE]`
 - Responses: `response.created` から `response.completed` までのCodex互換SSE eventを送る
+- Anthropic Messages: `message_start` から `message_stop` までのAnthropic互換SSE eventを送る
 - 設定された4xx/5xxはストリームを開始せず、HTTPエラーとJSON本文で返す
 
 現在のストリームは応答テキストを1つのdeltaとして送る。TTFTとtoken間遅延を個別に試験するための

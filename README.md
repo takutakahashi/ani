@@ -1,7 +1,7 @@
 # ani
 
-YAML/TOMLで振る舞いを定義する、ステートレスなOpenAI API互換モックサーバーです。
-Chat Completions APIとResponses APIを、Next.js standaloneまたはDockerで実行できます。
+YAML/TOMLで振る舞いを定義する、ステートレスなOpenAI / Anthropic API互換モックサーバーです。
+OpenAI Chat Completions API・Responses APIとAnthropic Messages APIを、Next.js standaloneまたはDockerで実行できます。
 
 ## 起動
 
@@ -36,6 +36,16 @@ ANI_CONFIG_URL=https://config.example.com/ani.yaml npm run dev
 curl http://localhost:3000/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"ani-1","messages":[{"role":"user","content":"hello"}]}'
+```
+
+Anthropic SDKからはbase URLをこのサーバーへ向け、通常どおりAPI keyを設定して利用できます。
+
+```sh
+curl http://localhost:3000/v1/messages \
+  -H 'Content-Type: application/json' \
+  -H 'anthropic-version: 2023-06-01' \
+  -H 'x-api-key: test-key' \
+  -d '{"model":"claude-test","max_tokens":128,"messages":[{"role":"user","content":"hello"}]}'
 ```
 
 ## Docker
@@ -103,6 +113,7 @@ npx wrangler r2 object put ani-openai-mock-config/active.yaml \
 
 - `POST /v1/chat/completions`
 - `POST /v1/responses`
+- `POST /v1/messages`（Anthropic Messages API）
 - `GET /v1/models`
 - `GET /healthz`
 
@@ -131,10 +142,10 @@ npx wrangler deploy --dry-run
 ANI_BASE_URL=https://example.com ANI_API_KEY=test-key ./scripts/smoke-test.sh
 ```
 
-`/v1/responses` と `/v1/chat/completions` は `"stream": true` に対応しています。Responses APIは
+3つの生成エンドポイントは `"stream": true` に対応しています。Responses APIは
 `response.created` から `response.completed` までをSSEで返し、Chat Completionsは最後に
-`data: [DONE]` を返します。設定で4xx/5xxを指定したルールは、ストリームを開始せず従来どおり
-HTTPエラーのJSONレスポンスを返します。
+`data: [DONE]` を返します。Messages APIは `message_start` から `message_stop` までのAnthropic形式の
+SSEを返します。設定で4xx/5xxを指定したルールは、ストリームを開始せず各API形式のJSONエラーを返します。
 
 プロンプトに次のディレクティブを含めると、設定ファイルより優先してレスポンスを制御できます。
 
