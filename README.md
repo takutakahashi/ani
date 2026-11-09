@@ -57,6 +57,18 @@ docker run --rm -p 3000:3000 \
   ani
 ```
 
+`main` ブランチおよび `v*` タグへのpush時には、GitHub Actionsがamd64/arm64向けイメージを
+GitHub Container Registryへ公開します。最新版は次のコマンドで起動できます。
+
+```sh
+docker run --rm -p 3000:3000 \
+  -e ANI_CONFIG_URL=https://config.example.com/ani.yaml \
+  ghcr.io/takutakahashi/ani:latest
+```
+
+リリースタグ（例: `v1.0.0`）のイメージは同名のタグで公開されます。各ビルドにはコミットを示す
+`sha-<short-sha>` タグも付与されます。Pull Requestではレジストリへ公開せず、イメージのビルドのみを検証します。
+
 設定ファイルを差し替える場合:
 
 ```sh
