@@ -57,7 +57,7 @@ docker run --rm -p 3000:3000 \
   ani
 ```
 
-`main` ブランチおよび `v*` タグへのpush時には、GitHub Actionsがamd64/arm64向けイメージを
+`main` ブランチおよび `v*` タグへのpush時には、GitHub Actionsがamd64向けイメージを
 GitHub Container Registryへ公開します。最新版は次のコマンドで起動できます。
 
 ```sh
