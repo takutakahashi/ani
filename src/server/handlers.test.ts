@@ -85,8 +85,14 @@ describe("OpenAI-compatible handlers", () => {
     const body = await response.json();
 
     expect(body.choices[0].message.content).toContain("Available functions:");
-    expect(body.choices[0].message.content).toContain("echo(text)");
-    expect(body.choices[0].message.content).toContain("return(code=...");
+    expect(body.choices[0].message.content).toContain("Usage: echo(text)");
+    expect(body.choices[0].message.content).toContain("Example: echo(Hello, world!)");
+    expect(body.choices[0].message.content).toContain("Inputs (all optional):");
+    expect(body.choices[0].message.content).toContain("code: HTTP status code from 200 to 599");
+    expect(body.choices[0].message.content).toContain("response_text: response body as a JSON string");
+    expect(body.choices[0].message.content).toContain(
+      'Example: return(code=429, latency=500ms, retry=3, response_text="Try again")',
+    );
   });
 
   it("returns configured errors and headers", async () => {
