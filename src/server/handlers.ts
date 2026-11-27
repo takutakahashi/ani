@@ -6,6 +6,7 @@ import {
   normalizeResponseInput,
   type PromptPart,
 } from "@/src/prompt/normalize";
+import { findEchoDirective, FUNCTION_HELP } from "@/src/prompt/echo-directive";
 import { findReturnDirective, type ReturnDirective } from "@/src/prompt/return-directive";
 import { createPlan, type ResponsePlan } from "@/src/scenario/plan";
 
@@ -78,7 +79,10 @@ async function handleGeneration(request: Request, endpoint: Endpoint): Promise<R
     const rule = selectRule(config.rules, { model: body.model, headers: request.headers, parts });
     const plan = createPlan(config, rule, body.model, parts);
     const directive = findReturnDirective(parts);
-    if (directive !== undefined) applyReturnDirective(plan, directive, request, body);
+    const echoText = findEchoDirective(parts);
+    if (echoText !== undefined) applyResponseText(plan, echoText);
+    else if (directive !== undefined) applyReturnDirective(plan, directive, request, body);
+    else if (rule === undefined) applyResponseText(plan, FUNCTION_HELP);
     await delay(plan.latencyMs, request.signal);
     const response = render(plan, body.model, endpoint, body.stream === true);
     logRequest(request, endpoint, body.model, plan, performance.now() - started);
@@ -93,6 +97,12 @@ async function handleGeneration(request: Request, endpoint: Endpoint): Promise<R
   }
 }
 
+function applyResponseText(plan: ResponsePlan, text: string): void {
+  plan.text = text;
+  plan.outputTokens = Math.ceil([...text].length / 4);
+  if (plan.error !== undefined) plan.error = { ...plan.error, message: text };
+}
+
 function applyReturnDirective(
   plan: ResponsePlan,
   directive: ReturnDirective,
@@ -104,8 +114,7 @@ function applyReturnDirective(
   if (directive.retryAfter !== undefined) plan.headers["retry-after"] = directive.retryAfter;
   if (directive.responseText !== undefined) plan.text = directive.responseText;
   if (directive.debugResponse === true) plan.text = createDebugResponse(request, body);
-  plan.outputTokens = Math.ceil([...plan.text].length / 4);
-  if (plan.error !== undefined) plan.error = { ...plan.error, message: plan.text };
+  applyResponseText(plan, plan.text);
 }
 
 function createDebugResponse(request: Request, body: RequestBody): string {

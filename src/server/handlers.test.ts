@@ -12,6 +12,10 @@ defaults:
   model: ani-test
   response: { text: default, output_tokens: 3 }
 rules:
+  - id: greeting
+    match:
+      text: { equals: hello }
+    response: { text: default, output_tokens: 3 }
   - id: limited
     priority: 10
     match:
@@ -61,6 +65,28 @@ describe("OpenAI-compatible handlers", () => {
     expect(body.object).toBe("response");
     expect(body.output[0].content[0].text).toBe("default");
     expect(body.usage.output_tokens).toBe(3);
+  });
+
+  it("returns echo contents exactly as provided", async () => {
+    const expected = "  line one\r\nline two (with parentheses)  ";
+    const response = await handleResponses(
+      request("/v1/responses", { model: "ani-test", input: `echo(${expected})` }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.output_text).toBe(expected);
+  });
+
+  it("returns function help for input that matches neither a function nor a configured rule", async () => {
+    const response = await handleChatCompletions(
+      request("/v1/chat/completions", { model: "ani-test", messages: [{ role: "user", content: "unknown" }] }),
+    );
+    const body = await response.json();
+
+    expect(body.choices[0].message.content).toContain("Available functions:");
+    expect(body.choices[0].message.content).toContain("echo(text)");
+    expect(body.choices[0].message.content).toContain("return(code=...");
   });
 
   it("returns configured errors and headers", async () => {

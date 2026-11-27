@@ -25,8 +25,8 @@ rules:
       model: "ani-1",
       headers: new Headers(),
       parts: [
-        { role: "system", text: "needle", ordinal: 0 },
-        { role: "user", text: "needle", ordinal: 1 },
+        { role: "system", text: "needle", rawText: "needle", ordinal: 0 },
+        { role: "user", text: "needle", rawText: "needle", ordinal: 1 },
       ],
     });
     expect(rule?.id).toBe("high");
