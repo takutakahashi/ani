@@ -165,6 +165,14 @@ SSEを返します。設定で4xx/5xxを指定したルールは、ストリー�
 return(code=429, latency=100m, retry=3, response_text="OK", return_debug_response=false)
 ```
 
+入力全体を `echo(...)` で囲むと、括弧内の文字列を変更せずにそのまま応答します。
+
+```text
+echo(この文字列をそのまま返す)
+```
+
+組み込み関数にも設定ルールにも一致しない入力には、利用可能な関数と使用方法を返します。
+
 引数の順序は自由で、省略した値には設定ファイルのルールまたはdefaultsが使われます。`status` は `code`、
 `retry_after` は `retry` の別名としても利用できます。`latency` は `m` / `ms`（ミリ秒）または `s`（秒）です。
 `return_debug_response` が `true` の場合、`response_text` の代わりに method、URL、秘匿ヘッダーを除いた
